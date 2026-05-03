@@ -341,6 +341,32 @@ input:focus {
   transition: width .4s ease;
   width: 0%;
 }
+
+/* ── Direction radio group ───────────────────────────────────────────────── */
+.radio-group {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* ── Zoom display in output header ──────────────────────────────────────── */
+.zoom-pct {
+  font-size: 0.78rem;
+  color: var(--muted);
+  min-width: 3.2em;
+  text-align: center;
+  font-weight: 600;
+}
 </style>
 </head>
 <body>
@@ -398,6 +424,21 @@ input:focus {
         </div>
       </div>
 
+      <!-- Layout direction -->
+      <div class="field" style="margin-bottom:14px">
+        <label>Layout direction</label>
+        <div class="radio-group">
+          <label>
+            <input type="radio" name="direction" value="LR" checked>
+            Left → Right
+          </label>
+          <label>
+            <input type="radio" name="direction" value="TB">
+            Top → Bottom
+          </label>
+        </div>
+      </div>
+
       <button class="btn btn-primary" id="visualize-btn" disabled onclick="visualize()">
         <span class="spinner hidden" id="btn-spinner"></span>
         <span id="btn-text">Loading Python runtime…</span>
@@ -421,8 +462,13 @@ input:focus {
     <div class="output-header">
       <span class="output-title" id="output-title">Workflow Diagram</span>
       <div class="output-actions">
-        <button class="btn btn-sm" onclick="openFullscreen()">⛶ Open full</button>
-        <button class="btn btn-sm" onclick="downloadHtml()">⬇ Download HTML</button>
+        <button class="btn btn-sm" onclick="zoomViz(-0.2)" title="Zoom out">−</button>
+        <span class="zoom-pct" id="zoom-display">100%</span>
+        <button class="btn btn-sm" onclick="zoomViz(+0.2)" title="Zoom in">+</button>
+        <button class="btn btn-sm" onclick="openFullscreen()">⛶ Full</button>
+        <button class="btn btn-sm" onclick="downloadSvg()">↓ SVG</button>
+        <button class="btn btn-sm" onclick="downloadPng()">↓ PNG</button>
+        <button class="btn btn-sm" onclick="downloadHtml()">↓ HTML</button>
       </div>
     </div>
     <iframe id="diagram-frame" title="Workflow diagram"></iframe>
@@ -439,6 +485,7 @@ let pyodide    = null;
 let lastHtml   = null;
 let activeTab  = 'upload';
 let blobUrl    = null;
+let vizZoom    = 1;
 
 // ── Pyodide bootstrap ──────────────────────────────────────────────────────
 async function init() {
@@ -534,10 +581,12 @@ async function visualize() {
     setStatus('info', true, 'Parsing rules and inferring edges…');
     setProgress(50);
 
+    const direction = document.querySelector('input[name="direction"]:checked').value;
     pyodide.globals.set('_snakefile_content', content);
     pyodide.globals.set('_diagram_title', title);
+    pyodide.globals.set('_direction', direction);
     const html = await pyodide.runPythonAsync(
-      'visualize_string(_snakefile_content, _diagram_title)'
+      'visualize_string(_snakefile_content, _diagram_title, _direction)'
     );
 
     const nodeCount = pyodide.globals.get('_last_node_count');
@@ -605,6 +654,8 @@ async function getContent() {
 // ── Display result ─────────────────────────────────────────────────────────
 function displayResult(html, title, nodeCount, edgeCount) {
   lastHtml = html;
+  vizZoom  = 1;
+  document.getElementById('zoom-display').textContent = '100%';
 
   // Revoke previous blob to free memory
   if (blobUrl) URL.revokeObjectURL(blobUrl);
@@ -628,7 +679,68 @@ function displayResult(html, title, nodeCount, edgeCount) {
   setTimeout(() => out.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
 }
 
+// ── Zoom (operates on the iframe's SVG directly) ──────────────────────────
+function zoomViz(d) {
+  const frame = document.getElementById('diagram-frame');
+  try {
+    const svg = frame.contentDocument.getElementById('diagram');
+    if (!svg) return;
+    if (!svg._ow) {
+      svg._ow = +svg.getAttribute('width');
+      svg._oh = +svg.getAttribute('height');
+      svg.setAttribute('viewBox', `0 0 ${svg._ow} ${svg._oh}`);
+    }
+    vizZoom = Math.max(0.1, Math.min(5, vizZoom + d));
+    svg.setAttribute('width',  Math.round(svg._ow * vizZoom));
+    svg.setAttribute('height', Math.round(svg._oh * vizZoom));
+    frame.style.height = Math.max(svg._oh * vizZoom + 60, 420) + 'px';
+    document.getElementById('zoom-display').textContent = Math.round(vizZoom * 100) + '%';
+  } catch (_) {}
+}
+
 // ── Downloads / fullscreen ─────────────────────────────────────────────────
+function downloadSvg() {
+  if (!lastHtml) return;
+  const doc = new DOMParser().parseFromString(lastHtml, 'text/html');
+  const svg = doc.getElementById('diagram');
+  if (!svg) return;
+  const data = new XMLSerializer().serializeToString(svg);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([data], { type: 'image/svg+xml' }));
+  a.download = 'workflow_diagram.svg';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+function downloadPng() {
+  if (!lastHtml) return;
+  const doc = new DOMParser().parseFromString(lastHtml, 'text/html');
+  const svg = doc.getElementById('diagram');
+  if (!svg) return;
+  const w = +svg.getAttribute('width');
+  const h = +svg.getAttribute('height');
+  const data = new XMLSerializer().serializeToString(svg);
+  const url  = URL.createObjectURL(new Blob([data], { type: 'image/svg+xml' }));
+  const img  = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width  = w * 2;
+    canvas.height = h * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+    ctx.fillStyle = '#f5f6f8';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+    canvas.toBlob(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'workflow_diagram.png';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    });
+  };
+  img.src = url;
+}
+
 function downloadHtml() {
   if (!lastHtml) return;
   const a   = document.createElement('a');

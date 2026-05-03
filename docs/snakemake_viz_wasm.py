@@ -274,10 +274,9 @@ LANE_BG = {
 
 
 def build_html(rules: dict, edges: list, pos: dict, title: str,
-               groups: dict) -> str:
+               groups: dict, direction: str = 'LR') -> str:
     BW, BH, BR        = 148, 38, 7
     COL_GAP, ROW_GAP  = 30, 14
-    LANE_LBL_W        = 70
     LANE_PAD_X        = 14
     LANE_PAD_Y        = 12
     MARGIN            = 16
@@ -301,45 +300,86 @@ def build_html(rules: dict, edges: list, pos: dict, title: str,
             col_cnt[c] += 1
         lane_max_rows[g] = max(col_cnt.values(), default=1)
 
-    lane_y: dict = {}
-    cur_y = MARGIN
-    for g in lane_order:
-        h = (lane_max_rows[g] * (BH + ROW_GAP) - ROW_GAP + 2 * LANE_PAD_Y)
-        lane_y[g] = (cur_y, h)
-        cur_y += h + 10
+    if direction == 'TB':
+        # Vertical strips — nodes flow top-to-bottom by DAG depth
+        LANE_LBL_H = 26
 
-    total_h = cur_y + MARGIN
-    max_col = max((c for c, r in pos.values()), default=0)
-    COL_W = BW + COL_GAP
-    CONTENT_X = LANE_LBL_W + LANE_PAD_X
-    total_w = CONTENT_X + (max_col + 1) * COL_W + MARGIN
+        lane_x: dict = {}
+        cur_x = MARGIN
+        for g in lane_order:
+            w = lane_max_rows[g] * (BW + COL_GAP) - COL_GAP + 2 * LANE_PAD_X
+            lane_x[g] = (cur_x, w)
+            cur_x += w + 10
 
-    def box_xy(name):
-        g = groups[name][0]
-        c, lr = local_pos[name]
-        gy, gh = lane_y[g]
-        x = CONTENT_X + c * COL_W
-        y = gy + LANE_PAD_Y + lr * (BH + ROW_GAP)
-        return x, y
+        total_w   = cur_x + MARGIN
+        max_col   = max((c for c, r in pos.values()), default=0)
+        ROW_H     = BH + ROW_GAP
+        CONTENT_Y = LANE_LBL_H + LANE_PAD_Y
+        total_h   = CONTENT_Y + (max_col + 1) * ROW_H + MARGIN
+
+        def box_xy(name):
+            g = groups[name][0]
+            c, lr = local_pos[name]
+            gx, gw = lane_x[g]
+            x = gx + LANE_PAD_X + lr * (BW + COL_GAP)
+            y = CONTENT_Y + c * ROW_H
+            return x, y
+
+    else:
+        # Horizontal strips — nodes flow left-to-right by DAG depth (default)
+        LANE_LBL_W = 70
+
+        lane_y: dict = {}
+        cur_y = MARGIN
+        for g in lane_order:
+            h = lane_max_rows[g] * (BH + ROW_GAP) - ROW_GAP + 2 * LANE_PAD_Y
+            lane_y[g] = (cur_y, h)
+            cur_y += h + 10
+
+        total_h   = cur_y + MARGIN
+        max_col   = max((c for c, r in pos.values()), default=0)
+        COL_W     = BW + COL_GAP
+        CONTENT_X = LANE_LBL_W + LANE_PAD_X
+        total_w   = CONTENT_X + (max_col + 1) * COL_W + MARGIN
+
+        def box_xy(name):
+            g = groups[name][0]
+            c, lr = local_pos[name]
+            gy, gh = lane_y[g]
+            x = CONTENT_X + c * COL_W
+            y = gy + LANE_PAD_Y + lr * (BH + ROW_GAP)
+            return x, y
 
     coords = {n: box_xy(n) for n in rules if n in local_pos}
 
     parts = []
 
+    # Lane backgrounds + labels
     for g in lane_order:
-        gy, gh = lane_y[g]
         bg = LANE_BG.get(g, '#f5f6fa')
-        parts.append(
-            f'<rect x="4" y="{gy}" width="{total_w-8}" height="{gh}" '
-            f'rx="8" fill="{bg}" stroke="#d0d6e8" stroke-width="1"/>')
-        tx, ty = 4 + LANE_LBL_W / 2, gy + gh / 2
         ge = g.replace('&', '&amp;')
-        parts.append(
-            f'<text x="{tx:.1f}" y="{ty:.1f}" fill="#5a6480" '
-            f'font-family="\'Source Sans 3\',sans-serif" '
-            f'font-size="11" font-weight="700" letter-spacing="0.04em" '
-            f'text-anchor="middle" dominant-baseline="middle" '
-            f'transform="rotate(-90,{tx:.1f},{ty:.1f})">{ge}</text>')
+        if direction == 'TB':
+            gx, gw = lane_x[g]
+            parts.append(
+                f'<rect x="{gx}" y="4" width="{gw}" height="{total_h-8}" '
+                f'rx="8" fill="{bg}" stroke="#d0d6e8" stroke-width="1"/>')
+            parts.append(
+                f'<text x="{gx + gw/2:.1f}" y="{LANE_LBL_H/2:.1f}" fill="#5a6480" '
+                f'font-family="\'Source Sans 3\',sans-serif" '
+                f'font-size="11" font-weight="700" letter-spacing="0.04em" '
+                f'text-anchor="middle" dominant-baseline="middle">{ge}</text>')
+        else:
+            gy, gh = lane_y[g]
+            parts.append(
+                f'<rect x="4" y="{gy}" width="{total_w-8}" height="{gh}" '
+                f'rx="8" fill="{bg}" stroke="#d0d6e8" stroke-width="1"/>')
+            tx, ty = 4 + LANE_LBL_W / 2, gy + gh / 2
+            parts.append(
+                f'<text x="{tx:.1f}" y="{ty:.1f}" fill="#5a6480" '
+                f'font-family="\'Source Sans 3\',sans-serif" '
+                f'font-size="11" font-weight="700" letter-spacing="0.04em" '
+                f'text-anchor="middle" dominant-baseline="middle" '
+                f'transform="rotate(-90,{tx:.1f},{ty:.1f})">{ge}</text>')
 
     parts.append(textwrap.dedent("""
       <defs>
@@ -364,20 +404,30 @@ def build_html(rules: dict, edges: list, pos: dict, title: str,
         stroke = '#b0a0d4' if dashed else '#8a96ad'
         da = 'stroke-dasharray="5,3"' if dashed else ''
 
-        ar_x, ar_y = ax + BW, ay + BH // 2
-        al_x, al_y = bx, by + BH // 2
-        ab_x, ab_y = ax + BW // 2, ay + BH
-        bt_x, bt_y = bx + BW // 2, by
-
-        if abs(ay - by) < 4 and bx > ax:
-            d = f'M{ar_x},{ar_y} L{al_x-6},{al_y}'
-        elif bx > ax:
-            mx = ar_x + (al_x - ar_x) * 0.5
-            d = (f'M{ar_x},{ar_y} H{mx:.0f} '
-                 f'V{al_y:.0f} H{al_x-6:.0f}')
+        if direction == 'TB':
+            sx, sy = ax + BW // 2, ay + BH      # source bottom-centre
+            tx, ty = bx + BW // 2, by           # target top-centre
+            if abs(sx - tx) < 4 and ty > sy:
+                d = f'M{sx},{sy} L{tx},{ty-6}'
+            elif ty > sy:
+                my = sy + (ty - sy) // 2
+                d = f'M{sx},{sy} V{my} H{tx} V{ty-6}'
+            else:
+                d = f'M{sx},{sy} V{sy+12} H{tx} V{ty-6}'
         else:
-            d = (f'M{ab_x},{ab_y} V{ab_y+12:.0f} '
-                 f'H{bt_x:.0f} V{bt_y+6:.0f}')
+            ar_x, ar_y = ax + BW, ay + BH // 2
+            al_x, al_y = bx, by + BH // 2
+            ab_x, ab_y = ax + BW // 2, ay + BH
+            bt_x, bt_y = bx + BW // 2, by
+            if abs(ay - by) < 4 and bx > ax:
+                d = f'M{ar_x},{ar_y} L{al_x-6},{al_y}'
+            elif bx > ax:
+                mx = ar_x + (al_x - ar_x) * 0.5
+                d = (f'M{ar_x},{ar_y} H{mx:.0f} '
+                     f'V{al_y:.0f} H{al_x-6:.0f}')
+            else:
+                d = (f'M{ab_x},{ab_y} V{ab_y+12:.0f} '
+                     f'H{bt_x:.0f} V{bt_y+6:.0f}')
 
         parts.append(
             f'<path d="{d}" fill="none" stroke="{stroke}" '
@@ -415,29 +465,47 @@ def build_html(rules: dict, edges: list, pos: dict, title: str,
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap');
   *{{box-sizing:border-box;margin:0;padding:0}}
-  body{{background:#f5f6f8;font-family:'Source Sans 3',sans-serif;
-        padding:28px 16px 48px;min-height:100vh;text-align:center}}
-  h1{{font-size:1.25rem;font-weight:700;color:#1e2535;
-      margin-bottom:4px;letter-spacing:-.01em}}
+  body{{background:#f5f6f8;font-family:'Source Sans 3',sans-serif;min-height:100vh}}
+  h1{{font-size:1.25rem;font-weight:700;color:#1e2535;margin-bottom:4px;letter-spacing:-.01em}}
   p.sub{{font-size:.75rem;color:#7a8499;margin-bottom:22px;letter-spacing:.03em}}
-  .wrap{{background:#fff;border-radius:12px;
-         box-shadow:0 2px 16px rgba(0,0,0,.08);
-         padding:24px 20px;overflow-x:auto;
-         display:inline-block;max-width:calc(100vw - 32px);
-         text-align:left}}
+  #main{{text-align:center;padding:20px 16px 48px}}
+  .wrap{{background:#fff;border-radius:12px;box-shadow:0 2px 16px rgba(0,0,0,.08);
+         padding:24px 20px;overflow-x:auto;display:inline-block;
+         max-width:calc(100vw - 32px);text-align:left}}
   svg{{display:block}}
   .rbox{{cursor:default}}
   .rbox:hover rect{{filter:brightness(.93)}}
   #tip{{position:fixed;pointer-events:none;background:#1e2535;color:#e8ecf4;
         font-family:'Source Sans 3',sans-serif;font-size:12px;line-height:1.5;
         padding:8px 12px;border-radius:6px;max-width:280px;opacity:0;
-        transition:opacity .1s;z-index:99;
-        box-shadow:0 4px 12px rgba(0,0,0,.25)}}
+        transition:opacity .1s;z-index:99;box-shadow:0 4px 12px rgba(0,0,0,.25)}}
   #tip.on{{opacity:1}}
   #tip strong{{display:block;color:#fff;font-size:12.5px;margin-bottom:3px}}
+  #ctrl{{position:sticky;top:0;z-index:10;background:rgba(245,246,248,.96);
+         backdrop-filter:blur(4px);border-bottom:1px solid #e2e8f0;
+         padding:7px 16px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}}
+  .cbtn{{display:inline-flex;align-items:center;padding:4px 10px;
+         border:1.5px solid #d0d6e4;border-radius:5px;background:#fff;
+         font-size:.78rem;font-weight:600;color:#3a4460;cursor:pointer;
+         font-family:inherit;transition:border-color .12s,color .12s}}
+  .cbtn:hover{{border-color:#2563eb;color:#2563eb}}
+  #zp{{font-size:.78rem;min-width:3.2em;text-align:center;color:#5a6480;font-family:inherit}}
+  .csep{{width:1px;height:18px;background:#d0d6e4;margin:0 3px;flex-shrink:0}}
+  .clbl{{font-size:.75rem;font-weight:600;color:#94a3b8;letter-spacing:.03em}}
 </style>
 </head>
 <body>
+<div id="ctrl">
+  <span class="clbl">Zoom</span>
+  <button class="cbtn" onclick="zBy(-0.2)" title="Zoom out">−</button>
+  <span id="zp">100%</span>
+  <button class="cbtn" onclick="zBy(0.2)" title="Zoom in">+</button>
+  <button class="cbtn" onclick="zReset()" title="Reset zoom">↺</button>
+  <div class="csep"></div>
+  <button class="cbtn" onclick="dlSvg()">↓ SVG</button>
+  <button class="cbtn" onclick="dlPng()">↓ PNG</button>
+</div>
+<div id="main">
 <h1>{title_e}</h1>
 <p class="sub">Auto-generated Snakemake workflow diagram</p>
 <div class="wrap">
@@ -446,8 +514,49 @@ def build_html(rules: dict, edges: list, pos: dict, title: str,
 {svg_body}
 </svg>
 </div>
+</div>
 <div id="tip"></div>
 <script>
+const svg = document.getElementById('diagram');
+const ow = +svg.getAttribute('width'), oh = +svg.getAttribute('height');
+svg.setAttribute('viewBox', '0 0 ' + ow + ' ' + oh);
+let z = 1;
+function zBy(d){{ setZ(z + d); }}
+function zReset(){{ setZ(1); }}
+function setZ(v){{
+  z = Math.max(0.1, Math.min(5, v));
+  svg.setAttribute('width',  Math.round(ow * z));
+  svg.setAttribute('height', Math.round(oh * z));
+  document.getElementById('zp').textContent = Math.round(z * 100) + '%';
+}}
+function dlSvg(){{
+  const cl = svg.cloneNode(true);
+  cl.setAttribute('width', ow); cl.setAttribute('height', oh);
+  const b = new Blob([new XMLSerializer().serializeToString(cl)], {{type:'image/svg+xml'}});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(b); a.download = 'workflow_diagram.svg';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}}
+function dlPng(){{
+  const cl = svg.cloneNode(true);
+  cl.setAttribute('width', ow); cl.setAttribute('height', oh);
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(cl)], {{type:'image/svg+xml'}}));
+  const img = new Image();
+  img.onload = () => {{
+    const c = document.createElement('canvas');
+    c.width = ow * 2; c.height = oh * 2;
+    const ctx = c.getContext('2d');
+    ctx.scale(2, 2); ctx.fillStyle = '#f5f6f8'; ctx.fillRect(0, 0, ow, oh);
+    ctx.drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+    c.toBlob(blob => {{
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = 'workflow_diagram.png';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }});
+  }};
+  img.src = url;
+}}
 const tip = document.getElementById('tip');
 document.querySelectorAll('.rbox').forEach(g => {{
   const t = g.dataset.tip || '';
@@ -475,15 +584,19 @@ _last_node_count = 0
 _last_edge_count = 0
 
 
-def visualize_string(content: str, title: str = 'Workflow') -> str:
+def visualize_string(content: str, title: str = 'Workflow',
+                     direction: str = 'LR') -> str:
     """
     Main entry point for browser / Pyodide use.
     Takes raw Snakefile text, returns a complete standalone HTML string.
+    direction: 'LR' (left-to-right, default) or 'TB' (top-to-bottom).
     """
     global _last_node_count, _last_edge_count
 
     if not title:
         title = 'Workflow'
+    if direction not in ('LR', 'TB'):
+        direction = 'LR'
 
     rules, order = parse_rules_from_string(content)
     if len(rules) < 2:
@@ -501,4 +614,4 @@ def visualize_string(content: str, title: str = 'Workflow') -> str:
     _last_node_count = len(rules)
     _last_edge_count = len(edges)
 
-    return build_html(rules, edges, pos, title, groups)
+    return build_html(rules, edges, pos, title, groups, direction)
