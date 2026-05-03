@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Snakemake Pipeline Visualizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --primary:       #2563eb;
+  --primary-dark:  #1d4ed8;
+  --bg:            #f1f5f9;
+  --card:          #ffffff;
+  --text:          #1e293b;
+  --muted:         #64748b;
+  --border:        #e2e8f0;
+  --success-bg:    #f0fdf4;
+  --success-text:  #15803d;
+  --success-bdr:   #bbf7d0;
+  --error-bg:      #fef2f2;
+  --error-text:    #dc2626;
+  --error-bdr:     #fecaca;
+  --info-bg:       #eff6ff;
+  --info-text:     #1d4ed8;
+  --info-bdr:      #bfdbfe;
+  --radius:        10px;
+}
+
+body {
+  font-family: 'Source Sans 3', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+header {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 18px 32px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid #1e293b;
+}
+
+.header-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.header-text h1 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #f8fafc;
+}
+
+.header-text p {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.header-badge {
+  margin-left: auto;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  letter-spacing: 0.02em;
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+main {
+  max-width: 960px;
+  margin: 28px auto;
+  padding: 0 20px 60px;
+}
+
+/* ── Card ────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  margin-bottom: 18px;
+}
+
+.card-header {
+  padding: 16px 22px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.card-body {
+  padding: 20px 22px;
+}
+
+/* ── Field ───────────────────────────────────────────────────────────────── */
+.field {
+  margin-bottom: 18px;
+}
+
+.field:last-child { margin-bottom: 0; }
+
+.field label {
+  display: block;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.field .hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+input[type="text"],
+input[type="url"] {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  color: var(--text);
+  background: #fff;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 18px;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  padding: 9px 20px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color .15s, border-color .15s;
+}
+
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── Drop zone ───────────────────────────────────────────────────────────── */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 32px 20px;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+  background: #fafbfc;
+  text-align: center;
+  user-select: none;
+}
+
+.dropzone:hover,
+.dropzone.over { border-color: var(--primary); background: rgba(37,99,235,.03); }
+
+.dropzone.has-file {
+  border-style: solid;
+  border-color: var(--success-text);
+  background: var(--success-bg);
+}
+
+.dz-icon { font-size: 2rem; }
+
+.dz-primary {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.dz-secondary {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.dz-filename {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--success-text);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 24px;
+  border: none;
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .15s, opacity .15s, border-color .15s, color .15s;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+  margin-top: 16px;
+}
+
+.btn-primary:hover:not(:disabled) { background: var(--primary-dark); }
+.btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn-sm {
+  padding: 5px 13px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: #fff;
+  color: var(--text);
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+}
+
+.btn-sm:hover { border-color: var(--primary); color: var(--primary); }
+
+/* ── Status bar ──────────────────────────────────────────────────────────── */
+.status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 16px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-bottom: 18px;
+  border: 1px solid transparent;
+  transition: all .2s;
+}
+
+.status.info    { background: var(--info-bg);    color: var(--info-text);    border-color: var(--info-bdr); }
+.status.success { background: var(--success-bg); color: var(--success-text); border-color: var(--success-bdr); }
+.status.error   { background: var(--error-bg);   color: var(--error-text);   border-color: var(--error-bdr); }
+.status.hidden  { display: none; }
+
+/* ── Spinner ─────────────────────────────────────────────────────────────── */
+.spinner {
+  width: 15px; height: 15px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin .65s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.hidden { display: none !important; }
+
+/* ── Output section ──────────────────────────────────────────────────────── */
+#output-section { display: none; }
+
+.output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--border);
+  background: #f8fafc;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.output-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.output-actions { display: flex; gap: 8px; }
+
+#diagram-frame {
+  width: 100%;
+  min-height: 420px;
+  border: none;
+  display: block;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.stats {
+  padding: 8px 22px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  background: #f8fafc;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+/* ── Progress bar ────────────────────────────────────────────────────────── */
+.progress-wrap {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 2px;
+  transition: width .4s ease;
+  width: 0%;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="header-icon">🐍</span>
+  <div class="header-text">
+    <h1>Snakemake Pipeline Visualizer</h1>
+    <p>Visualize any Snakemake workflow — runs entirely in your browser via WebAssembly</p>
+  </div>
+  <span class="header-badge">Powered by Pyodide</span>
+</header>
+
+<main>
+
+  <!-- ── Input card ───────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">⚙️ Pipeline Input</div>
+    <div class="card-body">
+
+      <!-- Title -->
+      <div class="field">
+        <label for="title-input">Diagram title <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <input type="text" id="title-input" placeholder="My Pipeline">
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="upload" onclick="switchTab('upload')">📁 Upload file</button>
+        <button class="tab-btn" data-tab="url" onclick="switchTab('url')">🔗 URL</button>
+      </div>
+
+      <!-- Upload panel -->
+      <div id="panel-upload" class="tab-panel active">
+        <div class="dropzone" id="dropzone" role="button" tabindex="0"
+             aria-label="Drop Snakefile here or click to browse"
+             onclick="document.getElementById('file-input').click()"
+             onkeydown="if(event.key==='Enter'||event.key===' ')document.getElementById('file-input').click()">
+          <span class="dz-icon" id="dz-icon">📄</span>
+          <span class="dz-primary" id="dz-primary">Click to browse</span>
+          <span class="dz-secondary" id="dz-secondary">or drag &amp; drop a Snakefile / .smk</span>
+        </div>
+        <input type="file" id="file-input" accept=".smk,.snakefile,Snakefile,*" style="display:none">
+      </div>
+
+      <!-- URL panel -->
+      <div id="panel-url" class="tab-panel">
+        <div class="field" style="margin-bottom:0">
+          <label for="url-input">Snakefile URL</label>
+          <input type="url" id="url-input"
+                 placeholder="https://raw.githubusercontent.com/user/repo/main/Snakefile">
+          <p class="hint">Paste a raw URL to a Snakefile or .smk file. GitHub raw URLs (raw.githubusercontent.com) are fully supported.</p>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="visualize-btn" disabled onclick="visualize()">
+        <span class="spinner hidden" id="btn-spinner"></span>
+        <span id="btn-text">Loading Python runtime…</span>
+      </button>
+
+      <div class="progress-wrap" id="progress-wrap" style="display:none">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Status bar ───────────────────────────────────────────────────── -->
+  <div class="status info" id="status-bar">
+    <span class="spinner" id="status-spinner"></span>
+    <span id="status-text">Initializing Pyodide (Python/WASM runtime)…</span>
+  </div>
+
+  <!-- ── Output ───────────────────────────────────────────────────────── -->
+  <div class="card" id="output-section">
+    <div class="output-header">
+      <span class="output-title" id="output-title">Workflow Diagram</span>
+      <div class="output-actions">
+        <button class="btn btn-sm" onclick="openFullscreen()">⛶ Open full</button>
+        <button class="btn btn-sm" onclick="downloadHtml()">⬇ Download HTML</button>
+      </div>
+    </div>
+    <iframe id="diagram-frame" title="Workflow diagram"></iframe>
+    <div class="stats" id="stats-bar"></div>
+  </div>
+
+</main>
+
+<script>
+'use strict';
+
+// ── State ──────────────────────────────────────────────────────────────────
+let pyodide    = null;
+let lastHtml   = null;
+let activeTab  = 'upload';
+let blobUrl    = null;
+
+// ── Pyodide bootstrap ──────────────────────────────────────────────────────
+async function init() {
+  try {
+    setProgress(10);
+    setStatus('info', true, 'Loading Python / WebAssembly runtime (~10 MB)…');
+
+    pyodide = await loadPyodide({
+      indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/'
+    });
+
+    setProgress(70);
+    setStatus('info', true, 'Loading visualization module…');
+
+    const resp = await fetch('snakemake_viz_wasm.py');
+    if (!resp.ok) throw new Error(`Failed to load snakemake_viz_wasm.py (HTTP ${resp.status})`);
+    await pyodide.runPythonAsync(await resp.text());
+
+    setProgress(100);
+    setStatus('success', false, 'Python runtime ready — paste a URL or upload a Snakefile to begin.');
+    hideProgress();
+
+    const btn = document.getElementById('visualize-btn');
+    btn.disabled = false;
+    document.getElementById('btn-text').textContent = 'Visualize Pipeline';
+
+  } catch (err) {
+    setStatus('error', false, `Initialization failed: ${err.message}`);
+    hideProgress();
+  }
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab-panel').forEach(p =>
+    p.classList.toggle('active', p.id === 'panel-' + tab));
+}
+
+// ── File input / drag-and-drop ─────────────────────────────────────────────
+const fileInput = document.getElementById('file-input');
+const dropzone  = document.getElementById('dropzone');
+
+fileInput.addEventListener('change', () => {
+  const f = fileInput.files[0];
+  if (!f) return;
+  dropzone.classList.add('has-file');
+  document.getElementById('dz-icon').textContent    = '✅';
+  document.getElementById('dz-primary').textContent = f.name;
+  document.getElementById('dz-secondary').textContent =
+    `${(f.size / 1024).toFixed(1)} KB — click to change`;
+});
+
+['dragover', 'dragleave', 'drop'].forEach(evt =>
+  dropzone.addEventListener(evt, e => {
+    e.preventDefault();
+    if (evt === 'dragover')  dropzone.classList.add('over');
+    if (evt === 'dragleave') dropzone.classList.remove('over');
+    if (evt === 'drop') {
+      dropzone.classList.remove('over');
+      const f = e.dataTransfer.files[0];
+      if (f) {
+        const dt = new DataTransfer();
+        dt.items.add(f);
+        fileInput.files = dt.files;
+        fileInput.dispatchEvent(new Event('change'));
+      }
+    }
+  })
+);
+
+// ── Visualize ──────────────────────────────────────────────────────────────
+async function visualize() {
+  const btn     = document.getElementById('visualize-btn');
+  const spinner = document.getElementById('btn-spinner');
+  const btnTxt  = document.getElementById('btn-text');
+
+  btn.disabled = true;
+  spinner.classList.remove('hidden');
+  btnTxt.textContent = 'Analyzing…';
+  setProgress(0);
+  document.getElementById('progress-wrap').style.display = 'block';
+
+  try {
+    setStatus('info', true, 'Reading Snakefile…');
+    setProgress(20);
+    const content = await getContent();
+
+    const title = document.getElementById('title-input').value.trim() || 'Workflow';
+
+    setStatus('info', true, 'Parsing rules and inferring edges…');
+    setProgress(50);
+
+    pyodide.globals.set('_snakefile_content', content);
+    pyodide.globals.set('_diagram_title', title);
+    const html = await pyodide.runPythonAsync(
+      'visualize_string(_snakefile_content, _diagram_title)'
+    );
+
+    const nodeCount = pyodide.globals.get('_last_node_count');
+    const edgeCount = pyodide.globals.get('_last_edge_count');
+
+    setProgress(90);
+    setStatus('success', false,
+      `Done — ${nodeCount} node${nodeCount !== 1 ? 's' : ''}, ` +
+      `${edgeCount} connection${edgeCount !== 1 ? 's' : ''} found.`
+    );
+    setProgress(100);
+    hideProgress();
+
+    displayResult(html, title, nodeCount, edgeCount);
+
+  } catch (err) {
+    setStatus('error', false, `Error: ${err.message}`);
+    hideProgress();
+  } finally {
+    btn.disabled = false;
+    spinner.classList.add('hidden');
+    btnTxt.textContent = 'Visualize Pipeline';
+  }
+}
+
+async function getContent() {
+  if (activeTab === 'upload') {
+    const f = document.getElementById('file-input').files[0];
+    if (!f) throw new Error('Please select a Snakefile first.');
+    return f.text();
+  }
+
+  const url = document.getElementById('url-input').value.trim();
+  if (!url) throw new Error('Please enter a URL.');
+  let resp;
+  try {
+    resp = await fetch(url);
+  } catch {
+    throw new Error(
+      'Could not fetch the URL. Check the address and ensure the server allows cross-origin requests (CORS).'
+    );
+  }
+  if (!resp.ok) throw new Error(`URL returned ${resp.status} ${resp.statusText}.`);
+  return resp.text();
+}
+
+// ── Display result ─────────────────────────────────────────────────────────
+function displayResult(html, title, nodeCount, edgeCount) {
+  lastHtml = html;
+
+  // Revoke previous blob to free memory
+  if (blobUrl) URL.revokeObjectURL(blobUrl);
+  blobUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+
+  document.getElementById('output-title').textContent = title;
+  document.getElementById('stats-bar').textContent =
+    `${nodeCount} rule${nodeCount !== 1 ? 's' : ''} · ${edgeCount} connection${edgeCount !== 1 ? 's' : ''}`;
+
+  const frame = document.getElementById('diagram-frame');
+  frame.src = blobUrl;
+  frame.onload = () => {
+    try {
+      const h = frame.contentDocument.documentElement.scrollHeight;
+      frame.style.height = Math.max(h + 4, 420) + 'px';
+    } catch (_) {}
+  };
+
+  const out = document.getElementById('output-section');
+  out.style.display = 'block';
+  setTimeout(() => out.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+}
+
+// ── Downloads / fullscreen ─────────────────────────────────────────────────
+function downloadHtml() {
+  if (!lastHtml) return;
+  const a   = document.createElement('a');
+  a.href    = URL.createObjectURL(new Blob([lastHtml], { type: 'text/html' }));
+  a.download = 'workflow_diagram.html';
+  a.click();
+}
+
+function openFullscreen() {
+  if (!blobUrl) return;
+  window.open(blobUrl, '_blank');
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function setStatus(type, showSpinner, msg) {
+  const bar     = document.getElementById('status-bar');
+  const txt     = document.getElementById('status-text');
+  const spinner = document.getElementById('status-spinner');
+  bar.className = 'status ' + type;
+  txt.textContent = msg;
+  spinner.classList.toggle('hidden', !showSpinner);
+}
+
+function setProgress(pct) {
+  document.getElementById('progress-bar').style.width = pct + '%';
+}
+
+function hideProgress() {
+  setTimeout(() => {
+    document.getElementById('progress-wrap').style.display = 'none';
+    setProgress(0);
+  }, 600);
+}
+
+// ── Start ──────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
