@@ -515,7 +515,7 @@ def build_html(rules: dict, edges: list, pos: dict, title: str,
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{background:#f5f6f8;font-family:'Source Sans 3',sans-serif;
         display:flex;flex-direction:column;align-items:center;
-        overflow-x:auto;
+        min-width:fit-content;
         padding:28px 16px 48px;min-height:100vh}}
   h1{{font-size:1.25rem;font-weight:700;color:#1e2535;
       margin-bottom:4px;letter-spacing:-.01em}}
