@@ -391,8 +391,10 @@ input:focus {
         <div class="field" style="margin-bottom:0">
           <label for="url-input">Snakefile URL</label>
           <input type="url" id="url-input"
-                 placeholder="https://raw.githubusercontent.com/user/repo/main/Snakefile">
-          <p class="hint">Paste a raw URL to a Snakefile or .smk file. GitHub raw URLs (raw.githubusercontent.com) are fully supported.</p>
+                 placeholder="https://raw.githubusercontent.com/user/repo/main/Snakefile"
+                 oninput="previewRawUrl(this.value)">
+          <p class="hint">Paste any GitHub file URL — regular <code>github.com/…/blob/…</code> links are auto-converted to raw. Or paste a raw URL directly.</p>
+          <p id="url-preview" style="font-size:0.78rem;color:var(--success-text);margin-top:4px;display:none"></p>
         </div>
       </div>
 
@@ -561,6 +563,24 @@ async function visualize() {
   }
 }
 
+function toRawUrl(url) {
+  // Convert github.com/.../blob/... to raw.githubusercontent.com
+  const m = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/(.+)$/);
+  if (m) return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}`;
+  return url;
+}
+
+function previewRawUrl(val) {
+  const raw = toRawUrl(val.trim());
+  const preview = document.getElementById('url-preview');
+  if (raw !== val.trim() && val.trim()) {
+    preview.textContent = '→ Will fetch: ' + raw;
+    preview.style.display = 'block';
+  } else {
+    preview.style.display = 'none';
+  }
+}
+
 async function getContent() {
   if (activeTab === 'upload') {
     const f = document.getElementById('file-input').files[0];
@@ -568,14 +588,14 @@ async function getContent() {
     return f.text();
   }
 
-  const url = document.getElementById('url-input').value.trim();
-  if (!url) throw new Error('Please enter a URL.');
+  const rawUrl = toRawUrl(document.getElementById('url-input').value.trim());
+  if (!rawUrl) throw new Error('Please enter a URL.');
   let resp;
   try {
-    resp = await fetch(url);
+    resp = await fetch(rawUrl);
   } catch {
     throw new Error(
-      'Could not fetch the URL. Check the address and ensure the server allows cross-origin requests (CORS).'
+      'Could not fetch the URL. If using a GitHub link, make sure it points to a file (not a repo homepage). CORS must be allowed by the server.'
     );
   }
   if (!resp.ok) throw new Error(`URL returned ${resp.status} ${resp.statusText}.`);
