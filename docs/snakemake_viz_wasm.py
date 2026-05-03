@@ -416,15 +416,15 @@ def build_html(rules: dict, edges: list, pos: dict, title: str,
   @import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap');
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{background:#f5f6f8;font-family:'Source Sans 3',sans-serif;
-        display:flex;flex-direction:column;align-items:center;
-        min-width:fit-content;
-        padding:28px 16px 48px;min-height:100vh}}
+        padding:28px 16px 48px;min-height:100vh;text-align:center}}
   h1{{font-size:1.25rem;font-weight:700;color:#1e2535;
       margin-bottom:4px;letter-spacing:-.01em}}
   p.sub{{font-size:.75rem;color:#7a8499;margin-bottom:22px;letter-spacing:.03em}}
   .wrap{{background:#fff;border-radius:12px;
          box-shadow:0 2px 16px rgba(0,0,0,.08);
-         padding:24px 20px;overflow-x:auto}}
+         padding:24px 20px;overflow-x:auto;
+         display:inline-block;max-width:calc(100vw - 32px);
+         text-align:left}}
   svg{{display:block}}
   .rbox{{cursor:default}}
   .rbox:hover rect{{filter:brightness(.93)}}
