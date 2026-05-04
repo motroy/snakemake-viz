@@ -782,19 +782,46 @@ function setZ(v) {{
 function _getSvgCloneWithFills() {{
   const svg = document.querySelector('.mermaid svg');
   if (!svg) return null;
-  // Read computed fill for every text node from the live DOM before cloning,
-  // so CSS-cascade-resolved colours survive as explicit attributes in the file.
+
+  // Snapshot computed fills for native SVG text nodes BEFORE cloning.
   const fills = [];
   svg.querySelectorAll('text, tspan').forEach(el => {{
     const f = window.getComputedStyle(el).getPropertyValue('fill');
-    fills.push((!f || f === 'none' || f === 'rgba(0, 0, 0, 0)') ? 'rgb(26,26,26)' : f);
+    fills.push((!f || f === 'none' || f === 'rgba(0, 0, 0, 0)') ? '#1a1a1a' : f);
   }});
+
   const clone = svg.cloneNode(true);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+
+  // Apply snapshotted fills to native SVG text elements.
   [...clone.querySelectorAll('text, tspan')].forEach((el, i) => {{
     if (fills[i] !== undefined) el.setAttribute('fill', fills[i]);
   }});
+
+  // Mermaid 11 renders node labels inside <foreignObject> (HTML-in-SVG).
+  // foreignObject does NOT render in standalone SVG files or when an SVG
+  // is loaded via img.src for canvas drawing, which breaks both SVG and PNG
+  // downloads.  Replace each one with a plain SVG <text> element so the
+  // exported file is fully self-contained.
+  clone.querySelectorAll('foreignObject').forEach(fo => {{
+    const label = fo.textContent.trim();
+    const fw = parseFloat(fo.getAttribute('width'))  || 100;
+    const fh = parseFloat(fo.getAttribute('height')) || 30;
+    const fx = parseFloat(fo.getAttribute('x'))      || 0;
+    const fy = parseFloat(fo.getAttribute('y'))      || 0;
+    const textEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    textEl.setAttribute('x', String(fx + fw / 2));
+    textEl.setAttribute('y', String(fy + fh / 2));
+    textEl.setAttribute('text-anchor', 'middle');
+    textEl.setAttribute('dominant-baseline', 'middle');
+    textEl.setAttribute('fill', '#1a1a1a');
+    textEl.setAttribute('font-size', '14');
+    textEl.setAttribute('font-family', 'sans-serif');
+    textEl.textContent = label;
+    fo.parentNode.replaceChild(textEl, fo);
+  }});
+
   return clone;
 }}
 
