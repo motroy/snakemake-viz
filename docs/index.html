@@ -881,7 +881,10 @@ function downloadSvg() {
 
 function downloadPng() {
   if (!lastHtml) return;
-  if (isMermaidMode && _iframeFn('dlPng')) return;
+  // Always delegate to the iframe's dlPng() first — it operates on the live
+  // rendered SVG and strips cross-origin font references before rasterising,
+  // which prevents canvas tainting and the silent toBlob(null) failure.
+  if (_iframeFn('dlPng')) return;
   const doc = new DOMParser().parseFromString(lastHtml, 'text/html');
   const svg = doc.getElementById('diagram');
   if (!svg) return;

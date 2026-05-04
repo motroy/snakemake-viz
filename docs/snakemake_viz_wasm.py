@@ -596,6 +596,12 @@ function dlSvg(){{
 function dlPng(){{
   const cl = svg.cloneNode(true);
   cl.setAttribute('width', ow); cl.setAttribute('height', oh);
+  // Cross-origin web fonts (e.g. Google Fonts) used in an SVG that is drawn to
+  // a canvas taint the canvas, making toBlob() return null.  Strip any
+  // font-family attributes and replace with a safe local font before export.
+  cl.querySelectorAll('text, tspan').forEach(el => {{
+    el.setAttribute('font-family', 'system-ui, sans-serif');
+  }});
   const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(cl)], {{type:'image/svg+xml'}}));
   const img = new Image();
   img.onload = () => {{
@@ -606,11 +612,13 @@ function dlPng(){{
     ctx.drawImage(img, 0, 0);
     URL.revokeObjectURL(url);
     c.toBlob(blob => {{
+      if (!blob) return;
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob); a.download = 'workflow_diagram.png';
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
     }});
   }};
+  img.onerror = () => URL.revokeObjectURL(url);
   img.src = url;
 }}
 const tip = document.getElementById('tip');
@@ -839,6 +847,19 @@ function dlPng() {{
   if (!svg) return;
   const clone = _getSvgCloneWithFills();
   if (!clone) return;
+  // Mermaid embeds its CSS (including "font-family: 'Caveat', cursive") directly
+  // inside the SVG <style> block.  Cross-origin web fonts in SVG-as-image taint
+  // the canvas, causing toBlob() to return null.  Replace with safe local fonts.
+  clone.querySelectorAll('style').forEach(s => {{
+    s.textContent = s.textContent
+      .replace(/"Caveat"/g, 'system-ui').replace(/'Caveat'/g, 'system-ui')
+      .replace(/\bcursive\b/g, 'sans-serif');
+  }});
+  clone.querySelectorAll('[font-family]').forEach(el => {{
+    const ff = el.getAttribute('font-family');
+    if (ff.includes('Caveat') || ff.includes('cursive'))
+      el.setAttribute('font-family', 'system-ui, sans-serif');
+  }});
   const w = svg.viewBox.baseVal.width  || +svg.getAttribute('width')  || svg.getBoundingClientRect().width;
   const h = svg.viewBox.baseVal.height || +svg.getAttribute('height') || svg.getBoundingClientRect().height;
   clone.setAttribute('width',  w);
@@ -855,6 +876,7 @@ function dlPng() {{
     ctx.drawImage(img, 0, 0);
     URL.revokeObjectURL(url);
     canvas.toBlob(blob => {{
+      if (!blob) return;
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = 'workflow_diagram.png';
