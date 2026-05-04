@@ -10,6 +10,62 @@ from collections import defaultdict
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# 0. ARCHIVE EXTRACTION  (zip / tar — called from JS via Pyodide)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _is_snakefile_path(name: str) -> bool:
+    base = name.replace('\\', '/').split('/')[-1]
+    return (base in ('Snakefile', 'snakefile') or
+            base.endswith('.smk') or base.endswith('.snakefile'))
+
+
+def extract_snakefiles_from_archive(data, filename: str) -> str:
+    """
+    Extract and concatenate all Snakefile/.smk content from a zip or tar archive.
+    `data` is a bytes-like object (Uint8Array from JS).
+    """
+    import io
+    buf   = io.BytesIO(bytes(data))
+    parts = []
+    fname = filename.lower()
+
+    if fname.endswith('.zip'):
+        import zipfile
+        try:
+            with zipfile.ZipFile(buf) as zf:
+                for name in sorted(zf.namelist()):
+                    if not name.endswith('/') and _is_snakefile_path(name):
+                        try:
+                            parts.append(zf.read(name).decode('utf-8', errors='replace'))
+                        except Exception:
+                            pass
+        except zipfile.BadZipFile as exc:
+            raise ValueError(f'Invalid zip archive: {exc}') from exc
+
+    elif any(fname.endswith(ext)
+             for ext in ('.tar.gz', '.tgz', '.tar.bz2', '.tar.xz', '.tar')):
+        import tarfile
+        try:
+            with tarfile.open(fileobj=buf) as tf:
+                for member in sorted(tf.getmembers(), key=lambda m: m.name):
+                    if member.isfile() and _is_snakefile_path(member.name):
+                        try:
+                            fobj = tf.extractfile(member)
+                            if fobj:
+                                parts.append(fobj.read().decode('utf-8', errors='replace'))
+                        except Exception:
+                            pass
+        except tarfile.TarError as exc:
+            raise ValueError(f'Invalid tar archive: {exc}') from exc
+    else:
+        parts.append(bytes(data).decode('utf-8', errors='replace'))
+
+    if not parts:
+        raise ValueError('No Snakefile or .smk files found in the archive.')
+    return '\n\n'.join(parts)
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # 1. REGEXES & PARSING
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -577,7 +633,176 @@ document.querySelectorAll('.rbox').forEach(g => {{
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 7. PUBLIC API (called from JavaScript via Pyodide)
+# 7. MERMAID / EXCALIDRAW BUILDER
+# ════════════════════════════════════════════════════════════════════════════
+
+def _mermaid_id(name: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9_]', '_', name)
+
+
+def _build_mermaid_def(rules: dict, edges: list, groups: dict,
+                       order: list, direction: str) -> str:
+    dir_str = 'LR' if direction == 'LR' else 'TD'
+
+    group_members: dict = defaultdict(list)
+    for name in order:
+        if name in rules:
+            group_members[groups[name][0]].append(name)
+
+    lines = [f'graph {dir_str}']
+    for grp, members in group_members.items():
+        grp_id    = re.sub(r'[^a-zA-Z0-9]', '_', grp)
+        grp_label = grp.replace('"', "'")
+        lines.append(f'    subgraph {grp_id}["{grp_label}"]')
+        for name in members:
+            nid   = _mermaid_id(name)
+            label = name.replace('"', "'").replace('[', '(').replace(']', ')')
+            lines.append(f'        {nid}["{label}"]')
+        lines.append('    end')
+
+    for a, b in edges:
+        if a in rules and b in rules:
+            lines.append(f'    {_mermaid_id(a)} --> {_mermaid_id(b)}')
+
+    return '\n'.join(lines)
+
+
+def _build_mermaid_html(mermaid_def: str, title: str) -> str:
+    title_e = title.replace('&', '&amp;').replace('<', '&lt;')
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title_e}</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    background: #fafaf8;
+    font-family: 'Caveat', cursive;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 16px 48px;
+  }}
+  h1 {{
+    font-family: 'Caveat', cursive;
+    font-size: 2rem;
+    font-weight: 700;
+    color: #1e293b;
+    margin: 20px 0 4px;
+    text-align: center;
+  }}
+  p.sub {{
+    font-size: 1rem;
+    color: #7a8499;
+    margin-bottom: 24px;
+    text-align: center;
+  }}
+  .mermaid {{
+    background: #fff;
+    border: 2px solid #d0d4dc;
+    border-radius: 14px;
+    padding: 28px 24px;
+    box-shadow: 4px 4px 0 #d0d4dc;
+    overflow-x: auto;
+    max-width: calc(100vw - 32px);
+  }}
+  #ctrl {{
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(250,250,248,.96);
+    backdrop-filter: blur(4px);
+    border-bottom: 2px solid #e2e8f0;
+    padding: 7px 16px;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    width: 100%;
+    margin-bottom: 20px;
+  }}
+  .cbtn {{
+    display: inline-flex; align-items: center; padding: 3px 12px;
+    border: 2px solid #333; border-radius: 5px; background: #fff;
+    font-family: 'Caveat', cursive; font-size: 1.05rem; font-weight: 600;
+    color: #333; cursor: pointer; box-shadow: 2px 2px 0 #333;
+    transition: transform .1s, box-shadow .1s;
+  }}
+  .cbtn:hover {{ transform: translate(-1px,-1px); box-shadow: 3px 3px 0 #333; }}
+  .cbtn:active {{ transform: translate(1px,1px); box-shadow: 1px 1px 0 #333; }}
+  #zp {{ font-family:'Caveat',cursive; font-size:1rem; min-width:3.2em;
+         text-align:center; color:#5a6480; font-weight:600; }}
+  .csep {{ width:1px; height:18px; background:#d0d6e4; margin:0 3px; flex-shrink:0; }}
+  .clbl {{ font-size:.85rem; font-weight:700; color:#94a3b8; letter-spacing:.03em; }}
+</style>
+</head>
+<body>
+<div id="ctrl">
+  <span class="clbl">Zoom</span>
+  <button class="cbtn" onclick="zBy(-0.2)" title="Zoom out">−</button>
+  <span id="zp">100%</span>
+  <button class="cbtn" onclick="zBy(0.2)" title="Zoom in">+</button>
+  <button class="cbtn" onclick="zReset()" title="Reset zoom">↺</button>
+  <div class="csep"></div>
+  <button class="cbtn" onclick="dlSvg()">↓ SVG</button>
+</div>
+<h1>{title_e}</h1>
+<p class="sub">Auto-generated Snakemake workflow · Excalidraw style</p>
+<div class="mermaid" id="mermaid-wrap">
+%%{{init: {{'look': 'handDrawn', 'theme': 'default', 'themeVariables': {{'fontFamily': "'Caveat', cursive", 'fontSize': '16px'}}}}}}%%
+{mermaid_def}
+</div>
+<script>
+mermaid.initialize({{
+  startOnLoad: true,
+  look: 'handDrawn',
+  theme: 'default',
+  themeVariables: {{ fontFamily: "'Caveat', cursive", fontSize: '16px' }}
+}});
+
+let z = 1;
+const wrap = document.getElementById('mermaid-wrap');
+
+function zBy(d) {{ setZ(z + d); }}
+function zReset() {{ setZ(1); }}
+function setZ(v) {{
+  z = Math.max(0.1, Math.min(5, v));
+  wrap.style.transform = 'scale(' + z + ')';
+  wrap.style.transformOrigin = 'top center';
+  wrap.style.marginBottom = Math.round((z - 1) * wrap.scrollHeight) + 'px';
+  document.getElementById('zp').textContent = Math.round(z * 100) + '%';
+}}
+
+function dlSvg() {{
+  const svg = document.querySelector('.mermaid svg');
+  if (!svg) return;
+  const clone = svg.cloneNode(true);
+  const data = new XMLSerializer().serializeToString(clone);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([data], {{type: 'image/svg+xml'}}));
+  a.download = 'workflow_diagram.svg';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}}
+
+// After Mermaid renders, expose SVG as id="diagram" for outer frame zoom
+// and notify parent to resize the iframe
+setTimeout(() => {{
+  const svg = document.querySelector('.mermaid svg');
+  if (svg) svg.id = 'diagram';
+  try {{
+    window.parent.postMessage({{
+      type: 'snakeviz-rendered',
+      height: document.documentElement.scrollHeight
+    }}, '*');
+  }} catch(e) {{}}
+}}, 800);
+</script>
+</body>
+</html>"""
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 8. PUBLIC API (called from JavaScript via Pyodide)
 # ════════════════════════════════════════════════════════════════════════════
 
 _last_node_count = 0
@@ -615,3 +840,34 @@ def visualize_string(content: str, title: str = 'Workflow',
     _last_edge_count = len(edges)
 
     return build_html(rules, edges, pos, title, groups, direction)
+
+
+def visualize_mermaid_string(content: str, title: str = 'Workflow',
+                             direction: str = 'LR') -> str:
+    """
+    Like visualize_string but returns a Mermaid.js / Excalidraw-styled HTML.
+    """
+    global _last_node_count, _last_edge_count
+
+    if not title:
+        title = 'Workflow'
+    if direction not in ('LR', 'TB'):
+        direction = 'LR'
+
+    rules, order = parse_rules_from_string(content)
+    if len(rules) < 2:
+        rules, order = synthesise_from_string(content)
+    if not rules:
+        raise ValueError(
+            "No rules or output paths found. "
+            "Please check that this is a valid Snakefile."
+        )
+
+    edges  = infer_edges(rules, order)
+    groups = {n: classify(n, rules[n].get('shell', '')) for n in rules}
+
+    _last_node_count = len(rules)
+    _last_edge_count = len(edges)
+
+    mermaid_def = _build_mermaid_def(rules, edges, groups, order, direction)
+    return _build_mermaid_html(mermaid_def, title)

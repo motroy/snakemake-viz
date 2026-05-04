@@ -406,10 +406,17 @@ input:focus {
              onclick="document.getElementById('file-input').click()"
              onkeydown="if(event.key==='Enter'||event.key===' ')document.getElementById('file-input').click()">
           <span class="dz-icon" id="dz-icon">📄</span>
-          <span class="dz-primary" id="dz-primary">Click to browse</span>
-          <span class="dz-secondary" id="dz-secondary">or drag &amp; drop a Snakefile / .smk</span>
+          <span class="dz-primary" id="dz-primary">Click to browse or drag &amp; drop</span>
+          <span class="dz-secondary" id="dz-secondary">Snakefile · .smk · .zip · .tar.gz · or drag a folder</span>
+          <span style="font-size:0.78rem;color:var(--muted);margin-top:2px">
+            or <a href="#" onclick="document.getElementById('dir-input').click();return false"
+               style="color:var(--primary);font-weight:600">select a folder</a>
+          </span>
         </div>
-        <input type="file" id="file-input" accept=".smk,.snakefile,Snakefile,*" style="display:none">
+        <input type="file" id="file-input"
+               accept=".smk,.snakefile,Snakefile,.zip,.tar,.tar.gz,.tgz,.tar.bz2,.tar.xz,*"
+               style="display:none">
+        <input type="file" id="dir-input" webkitdirectory multiple style="display:none">
       </div>
 
       <!-- URL panel -->
@@ -435,6 +442,21 @@ input:focus {
           <label>
             <input type="radio" name="direction" value="TB">
             Top → Bottom
+          </label>
+        </div>
+      </div>
+
+      <!-- Visualization style -->
+      <div class="field" style="margin-bottom:14px">
+        <label>Visualization style</label>
+        <div class="radio-group">
+          <label>
+            <input type="radio" name="vizstyle" value="svg" checked>
+            Default SVG
+          </label>
+          <label>
+            <input type="radio" name="vizstyle" value="mermaid">
+            Mermaid <span style="font-size:0.78rem;color:var(--muted)">(Excalidraw)</span>
           </label>
         </div>
       </div>
@@ -481,11 +503,12 @@ input:focus {
 'use strict';
 
 // ── State ──────────────────────────────────────────────────────────────────
-let pyodide    = null;
-let lastHtml   = null;
-let activeTab  = 'upload';
-let blobUrl    = null;
-let vizZoom    = 1;
+let pyodide       = null;
+let lastHtml      = null;
+let activeTab     = 'upload';
+let blobUrl       = null;
+let vizZoom       = 1;
+let uploadedFiles = null;   // File[] from dir-input or directory drag-drop
 
 // ── Pyodide bootstrap ──────────────────────────────────────────────────────
 async function init() {
@@ -527,37 +550,143 @@ function switchTab(tab) {
     p.classList.toggle('active', p.id === 'panel-' + tab));
 }
 
+// ── URL include-resolution helpers ────────────────────────────────────────
+const _INCLUDE_RE   = /^\s*include\s*:\s*["']([^"']+)["']/gm;
+const _MODULE_SF_RE = /\bsnakefile\s*:\s*["']([^"']+)["']/gm;
+
+function resolveRelativeUrl(base, rel) {
+  if (!rel || rel.startsWith('/') || /^[a-z][a-z\d+\-.]*:/i.test(rel)) return null;
+  try {
+    return new URL(rel, base.substring(0, base.lastIndexOf('/') + 1)).href;
+  } catch { return null; }
+}
+
+async function fetchSnakefile(url, seen) {
+  if (seen.has(url)) return '';
+  seen.add(url);
+  const raw = toRawUrl(url);
+  let resp;
+  try { resp = await fetch(raw); } catch { return ''; }
+  if (!resp.ok) return '';
+  const text = await resp.text();
+  const deps = [
+    ...[...text.matchAll(_INCLUDE_RE)].map(m => m[1]),
+    ...[...text.matchAll(_MODULE_SF_RE)].map(m => m[1]),
+  ];
+  const parts = [text];
+  for (const dep of deps) {
+    const sub = resolveRelativeUrl(raw, dep);
+    if (sub) parts.push(await fetchSnakefile(sub, seen));
+  }
+  return parts.filter(Boolean).join('\n\n');
+}
+
+// ── Directory traversal helpers ───────────────────────────────────────────
+function isSnakefileName(name) {
+  const base = name.replace(/\\/g, '/').split('/').pop();
+  return base === 'Snakefile' || base === 'snakefile' ||
+         base.endsWith('.smk') || base.endsWith('.snakefile');
+}
+
+function isArchiveName(name) {
+  return /\.(zip|tar\.gz|tgz|tar\.bz2|tar\.xz|tar)$/i.test(name);
+}
+
+async function _collectFromEntry(entry, out) {
+  if (entry.isFile) {
+    out.push(await new Promise((res, rej) => entry.file(res, rej)));
+  } else if (entry.isDirectory) {
+    const reader = entry.createReader();
+    let batch;
+    do {
+      batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      for (const e of batch) await _collectFromEntry(e, out);
+    } while (batch.length > 0);
+  }
+}
+
+async function collectFilesFromEntry(entry) {
+  const out = [];
+  await _collectFromEntry(entry, out);
+  return out;
+}
+
+function setDropzoneReady(label, sub) {
+  dropzone.classList.add('has-file');
+  document.getElementById('dz-icon').textContent    = '✅';
+  document.getElementById('dz-primary').textContent = label;
+  document.getElementById('dz-secondary').textContent = sub;
+}
+
 // ── File input / drag-and-drop ─────────────────────────────────────────────
 const fileInput = document.getElementById('file-input');
+const dirInput  = document.getElementById('dir-input');
 const dropzone  = document.getElementById('dropzone');
 
 fileInput.addEventListener('change', () => {
   const f = fileInput.files[0];
   if (!f) return;
-  dropzone.classList.add('has-file');
-  document.getElementById('dz-icon').textContent    = '✅';
-  document.getElementById('dz-primary').textContent = f.name;
-  document.getElementById('dz-secondary').textContent =
-    `${(f.size / 1024).toFixed(1)} KB — click to change`;
+  uploadedFiles = null;
+  setDropzoneReady(f.name,
+    isArchiveName(f.name)
+      ? `Archive — ${(f.size / 1024).toFixed(1)} KB`
+      : `${(f.size / 1024).toFixed(1)} KB — click to change`);
+});
+
+dirInput.addEventListener('change', () => {
+  const files = [...dirInput.files].filter(f => isSnakefileName(f.name));
+  if (!files.length) {
+    alert('No Snakefile or .smk files found in the selected folder.');
+    return;
+  }
+  uploadedFiles = files;
+  setDropzoneReady(
+    `${files.length} Snakefile${files.length !== 1 ? 's' : ''} from folder`,
+    'click to change');
 });
 
 ['dragover', 'dragleave', 'drop'].forEach(evt =>
-  dropzone.addEventListener(evt, e => {
+  dropzone.addEventListener(evt, async e => {
     e.preventDefault();
     if (evt === 'dragover')  dropzone.classList.add('over');
     if (evt === 'dragleave') dropzone.classList.remove('over');
     if (evt === 'drop') {
       dropzone.classList.remove('over');
-      const f = e.dataTransfer.files[0];
-      if (f) {
-        const dt = new DataTransfer();
-        dt.items.add(f);
-        fileInput.files = dt.files;
-        fileInput.dispatchEvent(new Event('change'));
+      const item  = e.dataTransfer.items && e.dataTransfer.items[0];
+      const entry = item && item.webkitGetAsEntry && item.webkitGetAsEntry();
+      if (entry && entry.isDirectory) {
+        const all = await collectFilesFromEntry(entry);
+        const sfs = all.filter(f => isSnakefileName(f.name));
+        if (!sfs.length) {
+          alert('No Snakefile or .smk files found in the dropped folder.');
+          return;
+        }
+        uploadedFiles = sfs;
+        setDropzoneReady(
+          `${sfs.length} Snakefile${sfs.length !== 1 ? 's' : ''} from folder`,
+          entry.name + ' — drag again to change');
+      } else {
+        uploadedFiles = null;
+        const f = e.dataTransfer.files[0];
+        if (f) {
+          const dt = new DataTransfer();
+          dt.items.add(f);
+          fileInput.files = dt.files;
+          fileInput.dispatchEvent(new Event('change'));
+        }
       }
     }
   })
 );
+
+// Listen for Mermaid iframe ready message (resize iframe)
+window.addEventListener('message', e => {
+  if (e.data && e.data.type === 'snakeviz-rendered') {
+    const frame = document.getElementById('diagram-frame');
+    const h = e.data.height || 600;
+    frame.style.height = Math.max(h + 4, 420) + 'px';
+  }
+});
 
 // ── Visualize ──────────────────────────────────────────────────────────────
 async function visualize() {
@@ -572,22 +701,28 @@ async function visualize() {
   document.getElementById('progress-wrap').style.display = 'block';
 
   try {
-    setStatus('info', true, 'Reading Snakefile…');
+    setStatus('info', true,
+      activeTab === 'url'
+        ? 'Fetching Snakefile and included dependencies…'
+        : 'Reading Snakefile…');
     setProgress(20);
     const content = await getContent();
 
-    const title = document.getElementById('title-input').value.trim() || 'Workflow';
+    const title     = document.getElementById('title-input').value.trim() || 'Workflow';
+    const direction = document.querySelector('input[name="direction"]:checked').value;
+    const vizStyle  = document.querySelector('input[name="vizstyle"]:checked').value;
 
     setStatus('info', true, 'Parsing rules and inferring edges…');
     setProgress(50);
 
-    const direction = document.querySelector('input[name="direction"]:checked').value;
     pyodide.globals.set('_snakefile_content', content);
-    pyodide.globals.set('_diagram_title', title);
-    pyodide.globals.set('_direction', direction);
-    const html = await pyodide.runPythonAsync(
-      'visualize_string(_snakefile_content, _diagram_title, _direction)'
-    );
+    pyodide.globals.set('_diagram_title',     title);
+    pyodide.globals.set('_direction',         direction);
+
+    const pyFn = vizStyle === 'mermaid'
+      ? 'visualize_mermaid_string(_snakefile_content, _diagram_title, _direction)'
+      : 'visualize_string(_snakefile_content, _diagram_title, _direction)';
+    const html = await pyodide.runPythonAsync(pyFn);
 
     const nodeCount = pyodide.globals.get('_last_node_count');
     const edgeCount = pyodide.globals.get('_last_edge_count');
@@ -632,23 +767,39 @@ function previewRawUrl(val) {
 
 async function getContent() {
   if (activeTab === 'upload') {
+    // ── directory files collected via dir-input or drag ──────────────────
+    if (uploadedFiles && uploadedFiles.length > 0) {
+      const texts = await Promise.all(uploadedFiles.map(f => f.text()));
+      return texts.join('\n\n');
+    }
+
     const f = document.getElementById('file-input').files[0];
-    if (!f) throw new Error('Please select a Snakefile first.');
+    if (!f) throw new Error('Please select a Snakefile, archive, or folder first.');
+
+    // ── zip / tar archive → extract in Pyodide ───────────────────────────
+    if (isArchiveName(f.name)) {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      pyodide.globals.set('_archive_data', bytes);
+      pyodide.globals.set('_archive_name', f.name);
+      return await pyodide.runPythonAsync(
+        'extract_snakefiles_from_archive(_archive_data, _archive_name)'
+      );
+    }
+
+    // ── single Snakefile ─────────────────────────────────────────────────
     return f.text();
   }
 
+  // ── URL mode: fetch recursively following include: / module: ──────────
   const rawUrl = toRawUrl(document.getElementById('url-input').value.trim());
   if (!rawUrl) throw new Error('Please enter a URL.');
-  let resp;
   try {
-    resp = await fetch(rawUrl);
-  } catch {
+    return await fetchSnakefile(rawUrl, new Set());
+  } catch (err) {
     throw new Error(
       'Could not fetch the URL. If using a GitHub link, make sure it points to a file (not a repo homepage). CORS must be allowed by the server.'
     );
   }
-  if (!resp.ok) throw new Error(`URL returned ${resp.status} ${resp.statusText}.`);
-  return resp.text();
 }
 
 // ── Display result ─────────────────────────────────────────────────────────
