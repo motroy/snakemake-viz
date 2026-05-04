@@ -668,7 +668,9 @@ def _build_mermaid_def(rules: dict, edges: list, groups: dict,
 
 
 def _build_mermaid_html(mermaid_def: str, title: str) -> str:
+    import json as _json
     title_e = title.replace('&', '&amp;').replace('<', '&lt;')
+    mermaid_def_js = _json.dumps(mermaid_def)  # safe JS string literal
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -745,6 +747,8 @@ def _build_mermaid_html(mermaid_def: str, title: str) -> str:
   <button class="cbtn" onclick="zReset()" title="Reset zoom">↺</button>
   <div class="csep"></div>
   <button class="cbtn" onclick="dlSvg()">↓ SVG</button>
+  <button class="cbtn" onclick="dlPng()">↓ PNG</button>
+  <button class="cbtn" onclick="dlCode()">↓ Code</button>
 </div>
 <h1>{title_e}</h1>
 <p class="sub">Auto-generated Snakemake workflow · Excalidraw style</p>
@@ -753,6 +757,8 @@ def _build_mermaid_html(mermaid_def: str, title: str) -> str:
 {mermaid_def}
 </div>
 <script>
+const _MERMAID_DEF = {mermaid_def_js};
+
 mermaid.initialize({{
   startOnLoad: true,
   look: 'handDrawn',
@@ -773,14 +779,69 @@ function setZ(v) {{
   document.getElementById('zp').textContent = Math.round(z * 100) + '%';
 }}
 
+function _getSvgCloneWithFills() {{
+  const svg = document.querySelector('.mermaid svg');
+  if (!svg) return null;
+  // Read computed fill for every text node from the live DOM before cloning,
+  // so CSS-cascade-resolved colours survive as explicit attributes in the file.
+  const fills = [];
+  svg.querySelectorAll('text, tspan').forEach(el => {{
+    const f = window.getComputedStyle(el).getPropertyValue('fill');
+    fills.push((!f || f === 'none' || f === 'rgba(0, 0, 0, 0)') ? 'rgb(26,26,26)' : f);
+  }});
+  const clone = svg.cloneNode(true);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+  [...clone.querySelectorAll('text, tspan')].forEach((el, i) => {{
+    if (fills[i] !== undefined) el.setAttribute('fill', fills[i]);
+  }});
+  return clone;
+}}
+
 function dlSvg() {{
+  const clone = _getSvgCloneWithFills();
+  if (!clone) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], {{type: 'image/svg+xml'}}));
+  a.download = 'workflow_diagram.svg';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}}
+
+function dlPng() {{
   const svg = document.querySelector('.mermaid svg');
   if (!svg) return;
-  const clone = svg.cloneNode(true);
-  const data = new XMLSerializer().serializeToString(clone);
+  const clone = _getSvgCloneWithFills();
+  if (!clone) return;
+  const w = svg.viewBox.baseVal.width  || +svg.getAttribute('width')  || svg.getBoundingClientRect().width;
+  const h = svg.viewBox.baseVal.height || +svg.getAttribute('height') || svg.getBoundingClientRect().height;
+  clone.setAttribute('width',  w);
+  clone.setAttribute('height', h);
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], {{type: 'image/svg+xml'}}));
+  const img = new Image();
+  img.onload = () => {{
+    const canvas = document.createElement('canvas');
+    canvas.width = w * 2; canvas.height = h * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+    ctx.fillStyle = '#fafaf8';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+    canvas.toBlob(blob => {{
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'workflow_diagram.png';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }});
+  }};
+  img.onerror = () => {{ URL.revokeObjectURL(url); }};
+  img.src = url;
+}}
+
+function dlCode() {{
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([data], {{type: 'image/svg+xml'}}));
-  a.download = 'workflow_diagram.svg';
+  a.href = URL.createObjectURL(new Blob([_MERMAID_DEF], {{type: 'text/plain'}}));
+  a.download = 'workflow_diagram.mmd';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }}
 

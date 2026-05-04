@@ -490,6 +490,7 @@ input:focus {
         <button class="btn btn-sm" onclick="openFullscreen()">⛶ Full</button>
         <button class="btn btn-sm" onclick="downloadSvg()">↓ SVG</button>
         <button class="btn btn-sm" onclick="downloadPng()">↓ PNG</button>
+        <button class="btn btn-sm" id="btn-dl-code" onclick="downloadCode()" style="display:none">↓ Code</button>
         <button class="btn btn-sm" onclick="downloadHtml()">↓ HTML</button>
       </div>
     </div>
@@ -803,10 +804,14 @@ async function getContent() {
 }
 
 // ── Display result ─────────────────────────────────────────────────────────
+let isMermaidMode = false;
+
 function displayResult(html, title, nodeCount, edgeCount) {
   lastHtml = html;
   vizZoom  = 1;
+  isMermaidMode = document.querySelector('input[name="vizstyle"]:checked').value === 'mermaid';
   document.getElementById('zoom-display').textContent = '100%';
+  document.getElementById('btn-dl-code').style.display = isMermaidMode ? '' : 'none';
 
   // Revoke previous blob to free memory
   if (blobUrl) URL.revokeObjectURL(blobUrl);
@@ -850,8 +855,20 @@ function zoomViz(d) {
 }
 
 // ── Downloads / fullscreen ─────────────────────────────────────────────────
+
+function _iframeFn(name) {
+  // Delegate a named function call into the diagram iframe (for mermaid mode).
+  try {
+    const frame = document.getElementById('diagram-frame');
+    const fn = frame.contentWindow && frame.contentWindow[name];
+    if (typeof fn === 'function') { fn(); return true; }
+  } catch (_) {}
+  return false;
+}
+
 function downloadSvg() {
   if (!lastHtml) return;
+  if (isMermaidMode && _iframeFn('dlSvg')) return;
   const doc = new DOMParser().parseFromString(lastHtml, 'text/html');
   const svg = doc.getElementById('diagram');
   if (!svg) return;
@@ -864,6 +881,7 @@ function downloadSvg() {
 
 function downloadPng() {
   if (!lastHtml) return;
+  if (isMermaidMode && _iframeFn('dlPng')) return;
   const doc = new DOMParser().parseFromString(lastHtml, 'text/html');
   const svg = doc.getElementById('diagram');
   if (!svg) return;
@@ -890,6 +908,11 @@ function downloadPng() {
     });
   };
   img.src = url;
+}
+
+function downloadCode() {
+  if (!lastHtml || !isMermaidMode) return;
+  _iframeFn('dlCode');
 }
 
 function downloadHtml() {
